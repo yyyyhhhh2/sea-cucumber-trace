@@ -1,0 +1,6 @@
+trace.db
+*.exe
+backend/trace.db
+frontend/node_modules
+frontend/dist
+.env
