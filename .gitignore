@@ -4,3 +4,17 @@ backend/trace.db
 frontend/node_modules
 frontend/dist
 .env
+
+# Local editor settings
+.idea/
+.vscode/
+
+# Runtime and build artifacts
+*.log
+*.err.log
+*.rdb
+backend/build/
+frontend/*.log
+frontend/*.err.log
+frontend/tsconfig.tsbuildinfo
+/package-lock.json

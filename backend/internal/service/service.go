@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 
+	appcache "sea-cucumber-trace/backend/internal/cache"
 	"sea-cucumber-trace/backend/internal/config"
 	"sea-cucumber-trace/backend/internal/fabric"
 	"sea-cucumber-trace/backend/internal/model"
@@ -20,15 +22,17 @@ type Service struct {
 	cfg    *config.Config
 	repo   *repository.Repository
 	ledger fabric.Ledger
+	cache  *appcache.Client
 }
 
-// ErrBatchNoRequired is returned when batch number is empty after trim.
 var ErrBatchNoRequired = errors.New("batch number required")
+var ErrStageRequired = errors.New("stage required")
+var ErrTitleRequired = errors.New("title required")
 
-func New(cfg *config.Config, repo *repository.Repository) *Service {
+func New(cfg *config.Config, repo *repository.Repository, cacheClient *appcache.Client) *Service {
 	gw := fabric.NewGateway(cfg)
 	led := fabric.ResolveLedger(cfg.FabricEnabled, gw)
-	return &Service{cfg: cfg, repo: repo, ledger: led}
+	return &Service{cfg: cfg, repo: repo, ledger: led, cache: cacheClient}
 }
 
 type Claims struct {
@@ -38,11 +42,127 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-
-
 func (s *Service) GetUser(id uint) (*model.User, error) {
 	return s.repo.UserByID(id)
 }
+
+type HealthStatus struct {
+	Status    string `json:"status"`
+	Service   string `json:"service"`
+	DB        string `json:"db"`
+	Cache     string `json:"cache"`
+	Ledger    string `json:"ledger"`
+	Timestamp string `json:"timestamp"`
+}
+
+func (s *Service) Health(ctx context.Context) *HealthStatus {
+	status := &HealthStatus{
+		Status:    "ok",
+		Service:   "sea-cucumber-trace",
+		DB:        "ok",
+		Cache:     "disabled",
+		Ledger:    "mock",
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	if err := s.repo.Ping(); err != nil {
+		status.Status = "degraded"
+		status.DB = "error"
+	}
+
+	if s.cache != nil {
+		status.Cache = "ok"
+		if err := s.cache.Ping(ctx); err != nil {
+			status.Status = "degraded"
+			status.Cache = "error"
+		}
+	}
+
+	if s.cfg.FabricEnabled {
+		status.Ledger = "fabric"
+	}
+
+	return status
+}
+
+func (s *Service) ListOrgs(actor *Claims) ([]model.Org, error) {
+	if actor == nil {
+		return nil, errors.New("unauthorized")
+	}
+	list, err := s.repo.ListOrgs()
+	if err != nil {
+		return nil, err
+	}
+	if actor.Role == model.RoleAdmin {
+		return list, nil
+	}
+	if actor.OrgID == nil {
+		return []model.Org{}, nil
+	}
+	filtered := make([]model.Org, 0, 1)
+	for _, item := range list {
+		if item.ID == *actor.OrgID {
+			filtered = append(filtered, item)
+			break
+		}
+	}
+	return filtered, nil
+}
+
+type DashboardSummary struct {
+	OrgCount           int64                    `json:"orgCount"`
+	BatchCount         int64                    `json:"batchCount"`
+	EventCount         int64                    `json:"eventCount"`
+	AnchoredEventCount int64                    `json:"anchoredEventCount"`
+	PendingChainCount  int64                    `json:"pendingChainCount"`
+	RecentBatches      []model.SeaCucumberBatch `json:"recentBatches"`
+}
+
+func (s *Service) DashboardSummary(actor *Claims) (*DashboardSummary, error) {
+	if actor == nil {
+		return nil, errors.New("unauthorized")
+	}
+
+	var scopeOrgID *uint
+	if actor.Role != model.RoleAdmin {
+		scopeOrgID = actor.OrgID
+	}
+
+	raw, err := s.repo.DashboardSummary(scopeOrgID)
+	if err != nil {
+		return nil, err
+	}
+	batches, err := s.repo.ListBatches(scopeOrgID)
+	if err != nil {
+		return nil, err
+	}
+	if len(batches) > 5 {
+		batches = batches[:5]
+	}
+
+	return &DashboardSummary{
+		OrgCount:           raw.OrgCount,
+		BatchCount:         raw.BatchCount,
+		EventCount:         raw.EventCount,
+		AnchoredEventCount: raw.AnchoredEventCount,
+		PendingChainCount:  raw.PendingChainCount,
+		RecentBatches:      batches,
+	}, nil
+}
+
+func (s *Service) ImportDemoData(actor *Claims) error {
+	if actor == nil || actor.Role != model.RoleAdmin {
+		return errors.New("forbidden")
+	}
+	if err := s.repo.ImportDemoData(); err != nil {
+		return err
+	}
+	if s.cache != nil {
+		_ = s.cache.FlushPrefix(context.Background())
+	}
+	return nil
+}
+
 func (s *Service) Login(username, password string) (string, *model.User, error) {
 	u, err := s.repo.UserByUsername(username)
 	if err != nil {
@@ -95,8 +215,23 @@ type CreateBatchInput struct {
 }
 
 func (s *Service) CreateBatch(actor *Claims, in CreateBatchInput) (*model.SeaCucumberBatch, error) {
-	if actor.Role != model.RoleAdmin && (actor.OrgID == nil || *actor.OrgID != in.OrgID) {
-		return nil, errors.New("forbidden")
+	if actor == nil {
+		return nil, errors.New("unauthorized")
+	}
+	if actor.Role == model.RoleAdmin {
+		if in.OrgID == 0 {
+			return nil, errors.New("org id required")
+		}
+	} else {
+		if actor.OrgID == nil {
+			return nil, errors.New("forbidden")
+		}
+		if in.OrgID == 0 {
+			in.OrgID = *actor.OrgID
+		}
+		if *actor.OrgID != in.OrgID {
+			return nil, errors.New("forbidden")
+		}
 	}
 	in.BatchNo = strings.TrimSpace(in.BatchNo)
 	if in.BatchNo == "" {
@@ -118,17 +253,36 @@ func (s *Service) CreateBatch(actor *Claims, in CreateBatchInput) (*model.SeaCuc
 	if err := s.repo.CreateBatch(b); err != nil {
 		return nil, err
 	}
+	s.invalidateBatchCaches(context.Background(), in.BatchNo, in.OrgID)
 	return s.repo.GetBatchByID(b.ID)
 }
 
 func (s *Service) ListBatches(actor *Claims) ([]model.SeaCucumberBatch, error) {
+	key := "batches:admin"
 	if actor.Role == model.RoleAdmin {
-		return s.repo.ListBatches(nil)
+		var cached []model.SeaCucumberBatch
+		if ok, err := s.cacheGet(context.Background(), key, &cached); ok && err == nil {
+			return cached, nil
+		}
+		list, err := s.repo.ListBatches(nil)
+		if err == nil {
+			_ = s.cacheSet(context.Background(), key, list)
+		}
+		return list, err
 	}
 	if actor.OrgID == nil {
 		return []model.SeaCucumberBatch{}, nil
 	}
-	return s.repo.ListBatches(actor.OrgID)
+	key = fmt.Sprintf("batches:org:%d", *actor.OrgID)
+	var cached []model.SeaCucumberBatch
+	if ok, err := s.cacheGet(context.Background(), key, &cached); ok && err == nil {
+		return cached, nil
+	}
+	list, err := s.repo.ListBatches(actor.OrgID)
+	if err == nil {
+		_ = s.cacheSet(context.Background(), key, list)
+	}
+	return list, err
 }
 
 func (s *Service) GetBatch(actor *Claims, id uint) (*model.SeaCucumberBatch, error) {
@@ -160,6 +314,18 @@ func (s *Service) AddEvent(actor *Claims, batchID uint, in AddEventInput) (*mode
 	if actor.Role != model.RoleAdmin && (actor.OrgID == nil || b.OrgID != *actor.OrgID) {
 		return nil, nil, errors.New("forbidden")
 	}
+	if strings.TrimSpace(string(in.Stage)) == "" {
+		return nil, nil, ErrStageRequired
+	}
+	if strings.TrimSpace(in.Title) == "" {
+		return nil, nil, ErrTitleRequired
+	}
+
+	in.Title = strings.TrimSpace(in.Title)
+	in.DetailJSON = strings.TrimSpace(in.DetailJSON)
+	in.Location = strings.TrimSpace(in.Location)
+	in.OperatorName = strings.TrimSpace(in.OperatorName)
+	in.EvidenceURLs = strings.TrimSpace(in.EvidenceURLs)
 
 	hash := fabric.HashTraceEvent(b.BatchNo, string(in.Stage), in.DetailJSON, in.Location, in.OperatorName, in.OccurredAt, in.EvidenceURLs)
 	ev := &model.TraceEvent{
@@ -177,6 +343,7 @@ func (s *Service) AddEvent(actor *Claims, batchID uint, in AddEventInput) (*mode
 	if err := s.repo.CreateEvent(ev); err != nil {
 		return nil, nil, err
 	}
+	defer s.invalidateBatchCaches(context.Background(), b.BatchNo, b.OrgID)
 
 	req := fabric.RecordRequest{
 		BatchNo:    b.BatchNo,
@@ -211,7 +378,7 @@ func (s *Service) AddEvent(actor *Claims, batchID uint, in AddEventInput) (*mode
 }
 
 type TimelineItem struct {
-	Event model.TraceEvent  `json:"event"`
+	Event model.TraceEvent   `json:"event"`
 	Chain *model.ChainRecord `json:"chain,omitempty"`
 }
 
@@ -241,25 +408,44 @@ func (s *Service) TimelineByBatchID(actor *Claims, batchID uint) ([]TimelineItem
 }
 
 func (s *Service) PublicTimeline(batchNo string) ([]TimelineItem, *model.SeaCucumberBatch, error) {
+	key := "trace:" + batchNo
+	var cached struct {
+		Items []TimelineItem          `json:"items"`
+		Batch *model.SeaCucumberBatch `json:"batch"`
+	}
+	if ok, err := s.cacheGet(context.Background(), key, &cached); ok && err == nil && cached.Batch != nil {
+		return cached.Items, cached.Batch, nil
+	}
 	b, err := s.repo.GetBatchByNo(batchNo)
 	if err != nil {
 		return nil, nil, err
 	}
 	items, err := s.TimelineByBatchID(nil, b.ID)
+	if err == nil {
+		_ = s.cacheSet(context.Background(), key, struct {
+			Items []TimelineItem          `json:"items"`
+			Batch *model.SeaCucumberBatch `json:"batch"`
+		}{Items: items, Batch: b})
+	}
 	return items, b, err
 }
 
 type VerifyResult struct {
-	BatchNo   string `json:"batchNo"`
-	OK        bool   `json:"ok"`
-	Message   string `json:"message"`
-	EventID   uint   `json:"eventId,omitempty"`
-	Expected  string `json:"expectedHash,omitempty"`
-	Actual    string `json:"actualHash,omitempty"`
-	TxID      string `json:"txId,omitempty"`
+	BatchNo  string `json:"batchNo"`
+	OK       bool   `json:"ok"`
+	Message  string `json:"message"`
+	EventID  uint   `json:"eventId,omitempty"`
+	Expected string `json:"expectedHash,omitempty"`
+	Actual   string `json:"actualHash,omitempty"`
+	TxID     string `json:"txId,omitempty"`
 }
 
 func (s *Service) Verify(batchNo string) ([]VerifyResult, error) {
+	key := "verify:" + batchNo
+	var cached []VerifyResult
+	if ok, err := s.cacheGet(context.Background(), key, &cached); ok && err == nil {
+		return cached, nil
+	}
 	b, err := s.repo.GetBatchByNo(batchNo)
 	if err != nil {
 		return nil, err
@@ -272,8 +458,8 @@ func (s *Service) Verify(batchNo string) ([]VerifyResult, error) {
 	for _, e := range evs {
 		want := fabric.HashTraceEvent(b.BatchNo, string(e.Stage), e.DetailJSON, e.Location, e.OperatorName, e.OccurredAt, e.EvidenceURLs)
 		v := VerifyResult{
-			BatchNo: b.BatchNo,
-			EventID: e.ID,
+			BatchNo:  b.BatchNo,
+			EventID:  e.ID,
 			Expected: want,
 			Actual:   e.DataHash,
 			OK:       want == e.DataHash,
@@ -288,5 +474,37 @@ func (s *Service) Verify(batchNo string) ([]VerifyResult, error) {
 		}
 		res = append(res, v)
 	}
+	_ = s.cacheSet(context.Background(), key, res)
 	return res, nil
+}
+
+func (s *Service) cacheGet(ctx context.Context, key string, dest any) (bool, error) {
+	if s.cache == nil {
+		return false, nil
+	}
+	return s.cache.GetJSON(ctx, key, dest)
+}
+
+func (s *Service) cacheSet(ctx context.Context, key string, value any) error {
+	if s.cache == nil {
+		return nil
+	}
+	return s.cache.SetJSON(ctx, key, value)
+}
+
+func (s *Service) invalidateBatchCaches(ctx context.Context, batchNo string, orgID uint) {
+	if s.cache == nil {
+		return
+	}
+	keys := []string{"batches:admin", "trace:" + batchNo, "verify:" + batchNo}
+	if orgID > 0 {
+		keys = append(keys, fmt.Sprintf("batches:org:%d", orgID))
+	}
+	if batchNo == "" {
+		keys = []string{"batches:admin"}
+		if orgID > 0 {
+			keys = append(keys, fmt.Sprintf("batches:org:%d", orgID))
+		}
+	}
+	_ = s.cache.Delete(ctx, keys...)
 }

@@ -35,7 +35,7 @@ async function submit() {
     if (axios.isAxiosError(e) && typeof e.message === "string") {
       error.value = e.message;
     } else {
-      error.value = "登录失败，请检查账号密码";
+      error.value = "登录失败，请检查账号或后端服务状态。";
     }
   } finally {
     loading.value = false;
@@ -48,13 +48,11 @@ async function submit() {
     <div
       class="relative overflow-hidden rounded-[1.75rem] border border-white/[0.08] bg-gradient-to-b from-white/[0.07] to-white/[0.02] p-8 shadow-card backdrop-blur-xl"
     >
-      <div
-        class="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-cyan-400/20 blur-3xl"
-      />
+      <div class="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-cyan-400/20 blur-3xl" />
       <div class="relative">
-        <h1 class="font-display text-2xl font-semibold tracking-tight text-white">欢迎回来</h1>
+        <h1 class="font-display text-2xl font-semibold tracking-tight text-white">企业控制台登录</h1>
         <p class="mt-2 text-sm leading-relaxed text-slate-400">
-          使用演示账号登录，或点击下方一键填入。
+          登录后可管理批次信息、登记追溯事件，并同步查看链上锚定状态。
         </p>
 
         <div class="mt-6 flex flex-wrap gap-2">
@@ -63,25 +61,25 @@ async function submit() {
             class="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-300 transition hover:border-cyan-400/35 hover:text-white"
             @click="fillDemo('orguser', 'org123')"
           >
-            企业 · orguser
+            企业账号（演示）
           </button>
           <button
             type="button"
             class="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-300 transition hover:border-cyan-400/35 hover:text-white"
             @click="fillDemo('admin', 'admin123')"
           >
-            管理员 · admin
+            管理员账号（演示）
           </button>
         </div>
 
         <form class="mt-8 space-y-4" @submit.prevent="submit">
           <div>
-            <label class="mb-1.5 block text-xs font-medium text-slate-400">用户名</label>
+            <label class="mb-1.5 block text-xs font-medium text-slate-400">账号</label>
             <input
               v-model="username"
               class="input-field"
               autocomplete="username"
-              placeholder="orguser"
+              placeholder="请输入账号"
             />
           </div>
           <div>
@@ -91,7 +89,7 @@ async function submit() {
               type="password"
               class="input-field"
               autocomplete="current-password"
-              placeholder="••••••••"
+              placeholder="请输入密码"
             />
           </div>
           <p
@@ -101,7 +99,7 @@ async function submit() {
             {{ error }}
           </p>
           <button type="submit" class="btn-primary mt-2 w-full" :disabled="loading">
-            {{ loading ? "登录中…" : "登录" }}
+            {{ loading ? "登录中..." : "登录并进入工作台" }}
           </button>
         </form>
       </div>

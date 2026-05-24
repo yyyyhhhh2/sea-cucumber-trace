@@ -23,34 +23,27 @@ function navClass(name: string | string[]) {
 <template>
   <div class="relative min-h-screen overflow-x-hidden bg-abyss-950">
     <WaveBackground />
-    <header
-      class="relative z-20 border-b border-white/[0.06] bg-abyss-950/75 backdrop-blur-xl"
-    >
+    <header class="relative z-20 border-b border-white/[0.06] bg-abyss-950/75 backdrop-blur-xl">
       <div class="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-4">
         <RouterLink to="/" class="group flex min-w-0 items-center gap-3">
           <div
             class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-400 to-teal-600 shadow-glow ring-1 ring-white/10 transition group-hover:ring-cyan-300/40"
           >
-            <span class="text-lg font-bold text-slate-950">海</span>
+            <span class="text-lg font-bold text-slate-950">S</span>
           </div>
           <div class="min-w-0">
-            <p class="font-display text-sm font-semibold tracking-wide text-white">
-              SeaTrace
-            </p>
-            <p class="truncate text-xs text-slate-500">海参链溯</p>
+            <p class="font-display text-sm font-semibold tracking-wide text-white">SeaTrace Cloud</p>
+            <p class="truncate text-xs text-slate-500">海参供应链可信追溯平台</p>
           </div>
         </RouterLink>
 
         <nav class="hidden items-center gap-1 md:flex">
-          <RouterLink :class="navClass('home')" to="/">首页</RouterLink>
-          <RouterLink
-            :class="navClass('trace')"
-            :to="{ name: 'trace', params: { batchNo: demoBatch } }"
-          >
-            溯源查询
+          <RouterLink :class="navClass('home')" to="/">产品首页</RouterLink>
+          <RouterLink :class="navClass('trace')" :to="{ name: 'trace', params: { batchNo: demoBatch } }">
+            公开查询
           </RouterLink>
           <RouterLink v-if="auth.isAuthed" :class="navClass('dashboard')" to="/dashboard">
-            工作台
+            企业工作台
           </RouterLink>
         </nav>
 
@@ -60,7 +53,7 @@ function navClass(name: string | string[]) {
             to="/login"
             class="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white transition hover:border-cyan-400/40 hover:bg-white/10"
           >
-            登录
+            企业登录
           </RouterLink>
           <button
             v-else
@@ -68,7 +61,7 @@ function navClass(name: string | string[]) {
             class="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white transition hover:border-cyan-400/40"
             @click="auth.clear(); $router.push('/')"
           >
-            退出
+            退出账号
           </button>
         </div>
       </div>
@@ -78,21 +71,20 @@ function navClass(name: string | string[]) {
       <slot />
     </main>
 
-    <footer
-      class="relative z-10 border-t border-white/[0.06] bg-gradient-to-t from-abyss-950 to-transparent py-12"
-    >
-      <div
-        class="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-6 text-xs text-slate-500 md:flex-row"
-      >
+    <footer class="relative z-10 border-t border-white/[0.06] bg-gradient-to-t from-abyss-950 to-transparent py-12">
+      <div class="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-6 text-xs text-slate-500 md:flex-row">
         <p class="text-center md:text-left">
-          毕业设计演示 · Go + Hyperledger Fabric · 链下业务数据 + 链上哈希锚定
+          SeaTrace Cloud · 面向品牌商、加工企业与渠道商的一体化可信追溯服务
         </p>
         <div class="flex flex-wrap items-center justify-center gap-4">
           <RouterLink class="link-subtle" :to="{ name: 'trace', params: { batchNo: demoBatch } }">
-            演示批次溯源
+            查看示例批次
           </RouterLink>
-          <span class="hidden text-slate-700 sm:inline">·</span>
-          <span class="text-slate-600">API <code class="rounded bg-white/5 px-1.5 py-0.5 font-mono text-[11px] text-slate-400">/api/health</code></span>
+          <span class="hidden text-slate-700 sm:inline">|</span>
+          <span class="text-slate-600">
+            API
+            <code class="rounded bg-white/5 px-1.5 py-0.5 font-mono text-[11px] text-slate-400">/api/health</code>
+          </span>
         </div>
       </div>
     </footer>

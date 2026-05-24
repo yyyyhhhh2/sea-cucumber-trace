@@ -2,14 +2,17 @@ package main
 
 import (
 	"log"
+	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/joho/godotenv"
-	"gorm.io/gorm"
 
+	appcache "sea-cucumber-trace/backend/internal/cache"
 	"sea-cucumber-trace/backend/internal/config"
+	"sea-cucumber-trace/backend/internal/database"
 	"sea-cucumber-trace/backend/internal/handler"
 	"sea-cucumber-trace/backend/internal/model"
 	"sea-cucumber-trace/backend/internal/repository"
@@ -23,8 +26,11 @@ func main() {
 	}
 
 	cfg := config.Load()
-	db, err := gorm.Open(sqlite.Open(cfg.DBPath), &gorm.Config{})
+	db, err := database.Open(cfg)
 	if err != nil {
+		log.Fatal(err)
+	}
+	if err := repository.PrepareForMigration(db); err != nil {
 		log.Fatal(err)
 	}
 	if err := db.AutoMigrate(
@@ -38,7 +44,17 @@ func main() {
 	}
 
 	repo := repository.New(db)
-	svc := service.New(cfg, repo)
+	cacheClient, err := appcache.New(cfg)
+	if err != nil {
+		log.Printf("redis disabled: %v", err)
+	}
+	defer func() {
+		if cacheClient != nil {
+			_ = cacheClient.Close()
+		}
+	}()
+
+	svc := service.New(cfg, repo, cacheClient)
 	h := handler.New(svc)
 
 	if err := repo.SeedIfEmpty(); err != nil {
@@ -60,11 +76,28 @@ func main() {
 		auth.Use(handler.JWTAuth(cfg))
 		{
 			auth.GET("/me", h.Me)
+			auth.GET("/orgs", h.ListOrgs)
+			auth.GET("/dashboard/summary", h.DashboardSummary)
 			auth.GET("/batches", h.ListBatches)
 			auth.POST("/batches", h.CreateBatch)
 			auth.GET("/batches/:id", h.GetBatch)
 			auth.POST("/batches/:id/events", h.AddEvent)
 			auth.GET("/batches/:id/timeline", h.Timeline)
+			auth.POST("/admin/import-demo", h.ImportDemoData)
+		}
+	}
+
+	if staticDir := strings.TrimSpace(cfg.StaticDir); staticDir != "" {
+		indexPath := filepath.Join(staticDir, "index.html")
+		if _, err := os.Stat(indexPath); err == nil {
+			r.Static("/assets", filepath.Join(staticDir, "assets"))
+			r.NoRoute(func(c *gin.Context) {
+				if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+					c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+					return
+				}
+				c.File(indexPath)
+			})
 		}
 	}
 

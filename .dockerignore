@@ -1,0 +1,8 @@
+.git
+.idea
+.vscode
+backend/*.log
+backend/*.exe
+backend/*.exe~
+backend/trace.db
+frontend/node_modules

@@ -1,0 +1,67 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: seatrace-mysql
+    restart: unless-stopped
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: sea_cucumber_trace
+      MYSQL_USER: seatrace
+      MYSQL_PASSWORD: seatrace123
+    ports:
+      - "3306:3306"
+    volumes:
+      - seatrace_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: seatrace-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - seatrace_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    container_name: seatrace-app
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      GIN_MODE: release
+      PORT: 8080
+      STATIC_DIR: /app/public
+      JWT_SECRET: dev-secret-change-me
+      DB_DRIVER: mysql
+      MYSQL_DSN: "seatrace:seatrace123@tcp(mysql:3306)/sea_cucumber_trace?charset=utf8mb4&parseTime=True&loc=Local"
+      REDIS_ENABLED: "true"
+      REDIS_ADDR: "redis:6379"
+      REDIS_PASSWORD: ""
+      REDIS_DB: 0
+      REDIS_KEY_PREFIX: "seatrace:"
+      CACHE_TTL_SECONDS: 300
+      FABRIC_ENABLED: "false"
+    ports:
+      - "5180:8080"
+
+volumes:
+  seatrace_mysql_data:
+  seatrace_redis_data:

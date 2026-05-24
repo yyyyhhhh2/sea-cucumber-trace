@@ -1,16 +1,17 @@
 package handler
 
 import (
+	"context"
 	"net/http"
-	"runtime"
 
 	"github.com/gin-gonic/gin"
 )
 
 func (h *Handler) Health(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"status":  "ok",
-		"service": "sea-cucumber-trace",
-		"go":      runtime.Version(),
-	})
+	health := h.svc.Health(context.Background())
+	statusCode := http.StatusOK
+	if health.Status != "ok" {
+		statusCode = http.StatusServiceUnavailable
+	}
+	c.JSON(statusCode, health)
 }

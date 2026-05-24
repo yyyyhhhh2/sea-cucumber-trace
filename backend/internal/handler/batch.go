@@ -24,7 +24,7 @@ func (h *Handler) ListBatches(c *gin.Context) {
 
 type createBatchBody struct {
 	BatchNo        string     `json:"batchNo" binding:"required"`
-	OrgID          uint       `json:"orgId" binding:"required"`
+	OrgID          uint       `json:"orgId"`
 	ProductName    string     `json:"productName"`
 	FarmBase       string     `json:"farmBase"`
 	Quality        string     `json:"quality"`
@@ -59,6 +59,8 @@ func (h *Handler) CreateBatch(c *gin.Context) {
 	if err != nil {
 		status := http.StatusForbidden
 		if errors.Is(err, service.ErrBatchNoRequired) {
+			status = http.StatusBadRequest
+		} else if err.Error() == "org id required" {
 			status = http.StatusBadRequest
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
@@ -121,6 +123,10 @@ func (h *Handler) AddEvent(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 			return
 		}
+		if errors.Is(err, service.ErrStageRequired) || errors.Is(err, service.ErrTitleRequired) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -160,4 +166,37 @@ func (h *Handler) Verify(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"results": res})
+}
+
+func (h *Handler) ListOrgs(c *gin.Context) {
+	cl := claimsFromCtx(c)
+	items, err := h.svc.ListOrgs(cl)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+func (h *Handler) DashboardSummary(c *gin.Context) {
+	cl := claimsFromCtx(c)
+	summary, err := h.svc.DashboardSummary(cl)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, summary)
+}
+
+func (h *Handler) ImportDemoData(c *gin.Context) {
+	cl := claimsFromCtx(c)
+	if err := h.svc.ImportDemoData(cl); err != nil {
+		status := http.StatusInternalServerError
+		if err.Error() == "forbidden" {
+			status = http.StatusForbidden
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "demo data imported"})
 }

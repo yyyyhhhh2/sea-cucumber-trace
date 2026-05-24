@@ -4,7 +4,13 @@ import api from "../api/client";
 
 export const useAuthStore = defineStore("auth", () => {
   const token = ref<string | null>(localStorage.getItem("token"));
-  const user = ref<{ displayName?: string; username?: string; role?: string } | null>(
+  const user = ref<{
+    id?: number;
+    displayName?: string;
+    username?: string;
+    role?: string;
+    orgId?: number;
+  } | null>(
     JSON.parse(localStorage.getItem("user") || "null"),
   );
 
